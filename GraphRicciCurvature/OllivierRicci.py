@@ -19,6 +19,7 @@ A class to compute the Ollivier-Ricci curvature of a given NetworkX graph.
 
 
 import heapq
+import os
 import math
 import multiprocessing as mp
 import time
@@ -50,8 +51,21 @@ _apsp = {}
 
 
 # -------------------------------------------------------
+_posix = os.name=="posix"
+if not _posix:
+    print("This windows implementation of GRC does not "
+          "support caching. Computation may be slower "
+          "than posix implementations.")
 
-@lru_cache(_cache_maxsize)
+def conditional_cache(use_cache, maxsize=_cache_maxsize):
+    def decorator(f):
+        if use_cache:
+            print("Using cache")
+            return lru_cache(maxsize=maxsize)(f)
+        return f
+    return decorator
+
+@conditional_cache(use_cache=_posix)
 def _get_single_node_neighbors_distributions(node, direction="successors"):
     """Get the neighbor density distribution of given node `node`.
 
@@ -456,19 +470,22 @@ def _compute_ricci_curvature_edges(G: nx.Graph, weight="weight", edge_list=[],
     # Start compute edge Ricci curvature
     t0 = time.time()
 
-    with mp.get_context('fork').Pool(processes=_proc) as pool:
-        # WARNING: Now only fork works, spawn will hang.
+    if os.name=="posix":
+        with mp.get_context('fork').Pool(processes=_proc) as pool:
+            # WARNING: Now only fork works, spawn will hang.
 
-        # Decide chunksize following method in map_async
-        if chunksize is None:
-            chunksize, extra = divmod(len(args), proc * 4)
-            if extra:
-                chunksize += 1
+            # Decide chunksize following method in map_async
+            if chunksize is None:
+                chunksize, extra = divmod(len(args), proc * 4)
+                if extra:
+                    chunksize += 1
 
-        # Compute Ricci curvature for edges
-        result = pool.imap_unordered(_wrap_compute_single_edge, args, chunksize=chunksize)
-        pool.close()
-        pool.join()
+            # Compute Ricci curvature for edges
+            result = pool.imap_unordered(_wrap_compute_single_edge, args, chunksize=chunksize)
+            pool.close()
+            pool.join()
+    else:
+        result = list(map(_wrap_compute_single_edge,args))
 
     # Convert edge index from nk back to nx for final output
     output = {}
